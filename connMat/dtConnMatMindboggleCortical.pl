@@ -110,7 +110,7 @@ my $timepoint = "";
 my $longitudinalTarget = "";
 
 GetOptions ("subject=s" => \$subject,
-	    "timepoint=s" => $timepoint,
+	    "timepoint=s" => \$timepoint,
 	    "antsct-base-dir=s" => \$antsCTBaseDir,
 	    "antslongct-base-dir=s" => sub {
 		my ($opt_name, $opt_value) = @_; 
@@ -142,11 +142,6 @@ else {
 # Gets removed later, so check we can create this and if not, exit immediately
 mkpath($tmpDir, {verbose => 0, mode => 0755}) or die "Cannot create working directory $tmpDir (maybe it exists from a previous failed run)\n\t";
 
-if (! -d $outputBaseDir) {
-    mkpath($outputBaseDir, {verbose => 0, mode => 0775}) or die "Output base directory \n  $outputBaseDir \n does not exist and cannot be created \n\t";
-}
- 
-
 # Base dir containing DT stuff for this TP
 my $tpDTIDir = "${dtBaseDir}/${subject}/${timepoint}";
 
@@ -161,12 +156,9 @@ my $dtMask = "${tpDTIDir}/dt/${subject}_${timepoint}_BrainMask.nii.gz";
 
 my $tpOutputDir = "${outputBaseDir}/${subject}/${timepoint}/connMat";     
 
-if (-d $tpOutputDir) {
-    print "\n  Output already exists for $subject $timepoint \n";
-    exit(1);
+if (! -d $tpOutputDir) {
+    mkpath($tpOutputDir, {verbose => 0, mode => 0775}) or die "Cannot create output directory $tpOutputDir\n\t";
 }
-
-mkpath($tpOutputDir, {verbose => 0, mode => 0775}) or die "Cannot create output directory $tpOutputDir\n\t";
 
 my $t1Brain = "";
 my $t1Mask = "";
@@ -189,7 +181,7 @@ if ($longitudinalTarget eq "sst") {
 }
 else {
     ($t1Brain, $t1Mask, $faT1, $jlfLabels, $dtToT1DistCorrRoot) = 
-	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $tpOutputDir, $longitudinalTarget);
+	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget);
     
     if (! -f "${dtToT1DistCorrRoot}0GenericAffine.mat" ) {
 	print "\n Missing DT -> T1 distortion correction warp for $subject $timepoint \n";
@@ -231,12 +223,9 @@ my $graphNodes = "${tpOutputDir}/${subject}_${timepoint}_GraphNodes.nii.gz";
 
 createGraphNodes($jlfLabels, $corticalLabelDef, $wmMask, $graphNodes);
 
-my $logFile = "${tpOutputDir}/connMat_${subject}_${timepoint}_log.txt";
-
 my $scriptToRun = "${tpOutputDir}/connMat_${subject}_${timepoint}.sh";
 
 my $antsVersion = `${antsPath}antsRegistration --version`;
-chomp $antsVersion;
 
 my $dtToReferenceWarpOption = "";
 
@@ -247,22 +236,10 @@ else {
     $dtToReferenceWarpOption = "--dist-corr-warp-root $dtToT1DistCorrRoot";
 }
 
-my $fh;
-
-open($fh, ">", $logFile);
-
-print $fh "ANTs version: ${antsVersion}\n\n";
-
-close($fh);
-
-my $cleanupCombinedWarpString = "";
-
-if ($longitudinalTarget eq "sst") {
-    $cleanupCombinedWarpString = "rm -f $dtToSSTComposedWarp";
-}
+print "ANTs version: ${antsVersion}\n";
 
 # Set paths here so they can't get altered by user profiles
-my $conmatScriptCmd = qq{
+my $connmatScriptCmd = qq{
 ${Bin}/dtConnMat.pl \\
     --dt $dt \\
     --mask $dtMask \\
@@ -276,14 +253,12 @@ ${Bin}/dtConnMat.pl \\
     --seed-fa-thresh 0.2 \\
     --curve-thresh 80 \\
     --compute-scalars 1 \\
-
-$cleanupCombinedWarpString
     
 };
 
-print "--- dtConnMat.pl call --- \n${conmatScriptCmd}\n\n";
+print "--- dtConnMat.pl call --- \n${connmatScriptCmd}\n\n";
 
-system("conmatScriptCmd");
+system("$connmatScriptCmd");
 
 system("rm -f $tmpDir/*");
 system("rmdir $tmpDir");
@@ -292,16 +267,16 @@ system("rmdir $tmpDir");
 #
 # Get images that we need to compute the connectivity in the target space.
 #
-# my ($t1Brain, $t1Mask, $faT1, $jlfLabels, $dtToTargetWarp) = getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $tpOutputDir, $longitudinalTarget)
+# my ($t1Brain, $t1Mask, $faT1, $jlfLabels, $dtToTargetWarp) = getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget)
 #
-# For longitudinal processing in the SST space, $dtToTargetWarp will be created in $tpOutputDir, otherwise it will be a string containing
+# For longitudinal processing in the SST space, $dtToTargetWarp will be an image, otherwise it will be a string containing
 # the distortion correction warp root.
 #
 # This doesn't check all images for correctness but will return an empty array if the T1 data cannot be found
 #
 sub getTargetSpaceImages {
 
-    my ($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $tpOutputDir, $longitudinalTarget) = @_;
+    my ($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget) = @_;
     
     my $t1Brain = "";
     my $t1Mask = "";
@@ -311,7 +286,6 @@ sub getTargetSpaceImages {
     my $faT1 = "";
 
     my $tpDTIDir = "${dtBaseDir}/${subject}/${timepoint}";
-
 
     if ($longitudinalTarget) {
 	
@@ -348,10 +322,10 @@ sub getTargetSpaceImages {
 	    my $t1ToSSTWarp = "${tpAntsCTOutputRoot}TemplateToSubject0Warp.nii.gz";
 	    my $t1ToSSTAffine = "${tpAntsCTOutputRoot}TemplateToSubject1GenericAffine.mat";
 	    
-	    my $distCorrInvWarp = "${tpDTIDir}/distCorr/${subject}_${tp}_DistCorr1InverseWarp.nii.gz";
-	    my $distCorrAffine = "${tpDTIDir}/distCorr/${subject}_${tp}_DistCorr0GenericAffine.mat";
+	    my $distCorrInvWarp = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr1InverseWarp.nii.gz";
+	    my $distCorrAffine = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr0GenericAffine.mat";
 	    
-	    $dtToTargetWarp = "${tpOutputDir}/${subject}_${timepoint}_tractWarpToSST.nii.gz";
+	    $dtToTargetWarp = "${tmpDir}/${subject}_${timepoint}_tractWarpToSST.nii.gz";
 
 	    my $dtMask = "${tpDTIDir}/dt/${subject}_${timepoint}_BrainMask.nii.gz";
 

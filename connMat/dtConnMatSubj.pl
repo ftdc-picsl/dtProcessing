@@ -177,12 +177,11 @@ for ( my $i=0; $i < $numTimepoints; $i++ ) {
     my $tpOutputDir = "${outputBaseDir}/${subject}/${tp}/connMat";     
 
     if (-d $tpOutputDir) {
-	print "\n  Output already exists for $subject $tp \n";
+	print "\n  Output dir already exists for $subject $tp \n";
 	next;
     }
 
     mkpath($tpOutputDir, {verbose => 0, mode => 0775}) or die "Cannot create output directory $tpOutputDir\n\t";
-
     
     my $antsCTArgString = "";
 
@@ -197,7 +196,7 @@ for ( my $i=0; $i < $numTimepoints; $i++ ) {
     # Root for output we will create
     my $tpOutputRoot = "${tpOutputDir}/${subject}_${tp}_";
 
-    my $logFile = "${tpOutputDir}/connMat_${subject}_${tp}_log.txt";
+    my $logFile = "${tpOutputDir}/connMatMindboggle_${subject}_${tp}_log.txt";
     
     my $scriptToRun = "${tpOutputDir}/connMatMindboggle_${subject}_${tp}.sh";
 
