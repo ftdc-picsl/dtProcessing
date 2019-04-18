@@ -172,11 +172,10 @@ my $dtToT1DistCorrRoot = "";
 
 if ($longitudinalTarget eq "sst") {
     ($t1Brain, $t1Mask, $faT1, $jlfLabels, $dtToSSTComposedWarp) = 
-	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $tpOutputDir, $longitudinalTarget);
+	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget);
     
     if (! -f $dtToSSTComposedWarp ) {
-	print "\n Missing SST warp for $subject $timepoint \n";
-	exit(1);
+	die("\n  Could not create SST warp for $subject $timepoint");
     }
 }
 else {
@@ -184,27 +183,22 @@ else {
 	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget);
     
     if (! -f "${dtToT1DistCorrRoot}0GenericAffine.mat" ) {
-	print "\n Missing DT -> T1 distortion correction warp for $subject $timepoint \n";
-	exit(1);
+	die("\n  Missing DT -> T1 distortion correction warp for $subject $timepoint");
     }
 }
 
 # Check we got all the images we need
 if (! -f $t1Brain ) {
-    print "\n  No T1 for $subject $timepoint \n";
-    exit(1);
+    die("\n  No T1 for $subject $timepoint");
 }
 if (! -f $faT1 ) {
-    print "\n  No FA normalized to T1 for $subject $timepoint \n";
-	exit(1);
+    die("\n  No FA normalized to T1 for $subject $timepoint");
 }
 if (! -f $t1Mask ) {
-    print "\n  No T1 brain mask for $subject $timepoint \n";
-    exit(1);
+    die("\n  No T1 brain mask for $subject $timepoint");
 }
 if (! -f $jlfLabels ) {
-    print "\n  No T1 JLF labels for $subject $timepoint \n";
-    exit(1);
+    die("\n  No T1 JLF labels for $subject $timepoint");
 }
 
 # Root for output we will create

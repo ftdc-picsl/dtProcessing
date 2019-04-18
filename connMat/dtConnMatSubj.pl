@@ -186,7 +186,7 @@ for ( my $i=0; $i < $numTimepoints; $i++ ) {
     my $antsCTArgString = "";
 
     if ($longitudinalTarget ne "") {
-	$antsCTArgString = "--antslongct-base-dir ${antsCTBaseDir}\\\n    --longitudinal-target $longitudinalTarget";
+	$antsCTArgString = "--antslongct-base-dir ${antsCTBaseDir} \\\n    --longitudinal-target $longitudinalTarget";
     }
     else {
 	$antsCTArgString = "--antsct-base-dir $antsCTBaseDir";
