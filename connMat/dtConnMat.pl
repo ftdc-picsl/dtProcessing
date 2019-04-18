@@ -246,7 +246,7 @@ system($cmd);
 system("rm -f ${allTracts}");
 
 # Further remove tracts below min tract length after exclusion / end points
-system("procstreamlines -inputfile $endpointTracts -mintractlength $minTractLength -header $referenceImage -outputfile $graphTracts");
+system("procstreamlines -inputfile $endpointTracts -mintractlength $minTractLength -header $referenceImage -outputfile $graphTracts -silent");
 
 system("rm -f ${endpointTracts}");
 
