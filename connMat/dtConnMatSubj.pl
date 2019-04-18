@@ -201,6 +201,8 @@ for ( my $i=0; $i < $numTimepoints; $i++ ) {
     
     my $scriptToRun = "${tpOutputDir}/connMatMindboggle_${subject}_${tp}.sh";
 
+    my $fh;
+
     open($fh, ">", $scriptToRun);
     
     # Set paths here so they can't get altered by user profiles
@@ -218,7 +220,7 @@ export R_LIBS_USER=${rLibsUserPath}
 ${Bin}/dtConnMatMindboggleCortical.pl \\
     --subject $subject \\
     --timepoint $tp \\
-    --dt-base-dir $dtBaseDir
+    --dt-base-dir $dtBaseDir \\
     $antsCTArgString \\
     --output-base-dir $outputBaseDir
 
