@@ -6,7 +6,7 @@ DTI processing scripts for retrospective data, no topup support.
 
 Assumes ANTs cortical thickness is run on T1 data
 
-1. dtPreProc/processDTI.pl
+1. preproc/processDTI.pl
 2. connMat/dtConnMatSubj.pl
 
 
@@ -14,7 +14,7 @@ Assumes ANTs cortical thickness is run on T1 data
 
 Requires cross-sectional processing and then antsLongitudinalCorticalThickness output
 
-1. dtPreProc/processDTILong.pl
+1. preproc/processDTILongSubj.pl
 2. connMat/dtConnMatSubj.pl
 
 
