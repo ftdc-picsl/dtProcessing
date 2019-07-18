@@ -14,17 +14,11 @@ my ($antsPath, $sysTmpDir) = @ENV{'ANTSPATH', 'TMPDIR'};
 
 
 # CSV file containing cortical label definitions
-my $corticalLabelDef = "";
+my $jlfCorticalLabelDef = "";
 
-# Used to make an exclusion ROI
-my $wmLabelDef = "";
+# CSV file containing WM label definitions
+my $jlfWMLabelDef = "";
 
-
-# CSV file containing cortical label definitions for the BrainCOLOR / Mindboggle JLF
-my $mindboggleCorticalLabelDef = "";
-
-# CSV file containing WM label definitions for the BrainCOLOR / Mindboggle JLF
-my $mindboggleWMLabelDef = "";
 
 
 my $usage = qq{
@@ -380,20 +374,23 @@ sub getTargetSpaceImages {
 
 
 #
-# Creates images $corticalMask and $wmMask from the JLF labels. The $wmMask contains the WM labels plus 
-# connected areas of FA > 0.25 that border cortex. 
+# Creates images $corticalMask and $wmMask from the JLF labels and FA in T1w space. 
+# The $wmMask contains the WM labels plus connected areas of FA > 0.25 that border cortex. 
 #
 # The cortical mask is cortical labeled voxels after the extra WM is added. 
 #
 # The additional WM is designed to prevent false positive connections with oversegmentated cortex, but we have
-# to be careful to avoid introducing holes into the cortex through which will cause false negatives. Therefore
+# to be careful to avoid introducing holes into the cortex, which will cause false negatives. Therefore
 # the additional WM is constrained to not reach the edge of the cortical mask.
 #
-# createTissueMasksFromJLF($jlfLabels, $corticalLabelDef, $wmLabelDef, $corticalMask, $wmMask)
 #
-sub createMasksFromJLF  {
+# my ($graphNodes, $exclusionMask, $wmCorticalBoundaryLabeled, $corticalMaskEdits) = 
+#         createGraphNodesAndMasks($jlfLabels, $faT1, $labelsForGraph, $corticalLabelDefForGraph)
+#
+#
+sub createGraphNodesAndTrackingMasks {
 
-    my ($jlfLabels, $corticalLabelDef, $wmLabelDef, $faT1, $corticalMask, $wmMask) = @_;
+    my ($jlfLabels, $faT1, ) = @_;
 
     my $tmpOutputRoot = "${tmpDir}/masksFromJLF_";
 
@@ -453,84 +450,58 @@ sub createMasksFromJLF  {
 	die("\n  Could not create WM mask $wmMask");
     }
 
+    my $corticalMaskTmp = "${tmpOutputRoot}CorticalMaskTmp.nii.gz";
+
     # Update the cortical mask
-    system("${antsPath}ImageMath 3 ${tmpOutputRoot}corticalMinusWMMask.nii.gz - $corticalLabelMask $wmMask");
+    #
+    # We'll do a last check for coverage before making this the final cortical mask
+    system("${antsPath}ImageMath 3 $corticalMaskTmp - $corticalLabelMask $wmMask");
+    system("${antsPath}ThresholdImage 3 $corticalMaskTmp $corticalMaskTmp 1 1");
 
-    system("${antsPath}ThresholdImage 3 ${tmpOutputRoot}corticalMinusWMMask.nii.gz $corticalMask 1 1");
-
-}
-
-
-#
-# Label the cortical mask derived from JLF ($corticalMask) with a different cortical parcellation
-#
-# Propagating the new labels to the JLF mask ensures that the WM / GM interface is consistent across parcellations.
-#
-#
-# replaceBrainColorCorticalLabels($corticalMask, $newLabels, $newCorticalLabelDef, $replacedCorticalLabels)
-# 
-sub replaceBrainColorCorticalLabels {
-
-    my ($corticalMask, $newLabels, $newCorticalLabelDef, $replacedCorticalLabels) = @_;
-
-    my $tmpOutputRoot = "${tmpDir}/" . fileparse($replacedCorticalLabels, (".nii", ".nii.gz")) . "_";
+    # Now make a WM tract termination mask
     
+    my $wmMaskDilated = "${tmpOutputRoot}wmMaskDilated.nii.gz";
+    
+    system("${antsPath}ImageMath 3 $wmMaskDilated MD $wmMask 1");
+    
+    # Termination mask for Camino is the inversion of the dilated mask
+    system("${antsPath}ThresholdImage 3 $wmMaskDilated $tractTerminationMask 1 1 0 1");
+    
+    if (! -f $tractTerminationMask ) {
+	die("\n  Could not create tract termination mask $tractTerminationMask");
+    }
+
+    # Now check that the boundary of the termination mask has cortical labels in voxels that are next to cortex
+    my $trackingEdgeMask = "${tmpOutputRoot}trackingBoundaryMask.nii.gz";
+    
+    system("ImageMath 3 $trackingEdgeMask - $wmMaskDilated $wmMask");
+
+    my $corticalMaskDilated = "${tmpOutputRoot}corticalMaskDilated.nii.gz";
+
+    system("ImageMath 3 $corticalMaskDilated MD $corticalMaskTmp 1");
+
+    # The intersection of these two should contain the cortical labels
+    my $possibleHoles = "${tmpOutputRoot}FillHolesMask.nii.gz";
+
+    system("ImageMath 3 $possibleHoles m $corticalMaskDilated $trackingEdgeMask");
+
+    # Add these to the cortical mask
+    system("ImageMath 3 $corticalMask + $corticalMaskTmp $possibleHoles");
+
+    # Now propagate the labels to the mask
     system("conmat -outputroot ${tmpOutputRoot}conmat_ -targetfile $newLabels -targetnamefile $newCorticalLabelDef -outputnodes");
     
-    # Adding stopping criteria and topology constraints
+    # Last two parameters add stopping criteria and topology constraints
     system("${antsPath}ImageMath 3 $replacedCorticalLabels PropagateLabelsThroughMask $corticalMask ${tmpOutputRoot}conmat_nodes.nii.gz 5 1");
-
-}
-
-
-#
-# Creates $graphNodes and $tractTermMask, based on the input cortical labels and the WM mask.
-# 
-# 1. Extract cortical labels from the image, removes others 
-# 2. Removes cortical label voxels inside the WM mask
-# 3. Fills any potential holes on the WM / GM boundary, to ensure that all streamlines
-#    reaching cortex get a label.
-#
-#
-#
-# createGraphNodes($corticalLabelImage, $wmMask, $graphNodes, $tractTermMask)
-#
-sub createGraphNodesAndTractTerminationMask {
-
-    my ($corticalLabelImage, $wmMask, $graphNodes, $tractTermMask) = @_;
-
-    my $tmpOutputRoot = "${tmpDir}/" . fileparse($graphNodes, (".nii", ".nii.gz")) . "_";
-
-    my $corticalNodeMask = "${tmpOutputRoot}corticalNodeMask.nii.gz";
-
-    system("${antsPath}ThresholdImage 3 $corticalLabelImage $corticalNodeMask 1 Inf");
- 
-    # This mask is created in several steps, the end result being that it's 1 if the voxel has a cortical label but is probably
-    # WM. It is used to remove such voxels from the final nodes
-    my $corticalNodeExclusionMask = "${tmpOutputRoot}corticalExclusionNodeMask.nii.gz";
- 
-    system("${antsPath}ImageMath 3 $corticalNodeMask m $wmMask $corticalNodeMask");
-
-    system("${antsPath}ThresholdImage 3 $corticalNodeMask $corticalNodeExclusionMask 1 1 0 1");
-
-    system("${antsPath}ImageMath 3 $graphNodes m ${tmpOutputRoot}conmat_nodes.nii.gz $corticalNodeExclusionMask");
-
-    if (! -f $graphNodes ) {
-	die("\n  Could not create nodes $graphNodes");
-    }
-
-    # FIXME 
-    # Make the tract termination mask from the negation of the dilated WM mask
-
-    my $tmpOutputRoot = "${tmpDir}/" . fileparse($exclusionMask, (".nii", ".nii.gz")) . "_";
     
-    my $tmpMask = "${tmpOutputRoot}wmMaskDilated.nii.gz";
-    
-    system("${antsPath}ImageMath 3 $tmpMask MD $wmMask 1");
-    
-    system("${antsPath}ThresholdImage 3 $tmpMask $exclusionMask 1 1 0 1");
-    
-    if (! -f $exclusionMask ) {
-	die("\n  Could not create tracking exclusion mask $exclusionMask");
-    }
+    # For QC purposes, record edits made to the cortical mask
+    # 1 = in JLF mask, but not in final mask
+    # 2 = in final mask, but not in JLF mask
+    # 3 = in both
+    system("ImageMath 3 $corticalMaskEdits m $corticalMask 2");
+    system("ImageMath 3 $corticalMaskEdits + $corticalMaskEdits $corticalLabelMask");
+
+    # Also output the mask containing all tracts, with cortical labels on the boundary
+    system("ImageMath 3 $wmCorticalBoundaryLabeled m $replacedCorticalLabels $wmMaskDilated");
+    system("ImageMath 3 $wmCorticalBoundaryLabeled addtozero $wmCorticalBoundaryLabeled $wmMaskDilated");
 }
