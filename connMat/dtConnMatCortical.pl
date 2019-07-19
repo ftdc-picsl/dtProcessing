@@ -14,10 +14,10 @@ my ($antsPath, $sysTmpDir) = @ENV{'ANTSPATH', 'TMPDIR'};
 
 
 # CSV file containing cortical label definitions
-my $jlfCorticalLabelDef = "";
+my $jlfCorticalLabelDef = "mindBoggleCorticalGraphNodes.csv";
 
 # CSV file containing WM label definitions
-my $jlfWMLabelDef = "";
+my $jlfWMLabelDef = "mindBoggleWMLabels.csv";
 
 
 
@@ -379,28 +379,33 @@ sub getTargetSpaceImages {
 #
 # The cortical mask is cortical labeled voxels after the extra WM is added. 
 #
-# The additional WM is designed to prevent false positive connections with oversegmentated cortex, but we have
-# to be careful to avoid introducing holes into the cortex, which will cause false negatives. Therefore
-# the additional WM is constrained to not reach the edge of the cortical mask.
+# The additional WM is designed to prevent false positive connections with when WM was mislabeled as cortex, 
+# but we have to be careful to avoid introducing holes into the cortex, which will cause false negatives. 
+# Therefore the additional WM is constrained to not reach the edge of the cortical mask.
+#
+# The first two args are the JLF, labels and FA in T1w space, the rest are file names of 
+# images to be created.
+#
+# The exclusion mask stops tracts that go more than one voxel outside of the WM mask. This allows the 
+# streamlines to reach cortical targets, but also lets them go one voxel (in T1w) space outside the WM mask,
+# without being terminated.
+#
+# createTrackingMasks($jlfLabels, $faT1, $corticalMask, $wmMask, $exclusionMask, $corticalMaskEdits)
 #
 #
-# my ($graphNodes, $exclusionMask, $wmCorticalBoundaryLabeled, $corticalMaskEdits) = 
-#         createGraphNodesAndMasks($jlfLabels, $faT1, $labelsForGraph, $corticalLabelDefForGraph)
-#
-#
-sub createGraphNodesAndTrackingMasks {
+sub createTrackingMasks {
 
-    my ($jlfLabels, $faT1, ) = @_;
+    my ($jlfLabels, $faT1, $corticalMask, $wmMask, $exclusionMask, $corticalMaskEdits) = @_;
 
-    my $tmpOutputRoot = "${tmpDir}/masksFromJLF_";
+    my $tmpOutputRoot = "${tmpDir}/trackingMasks_";
 
-    system("conmat -outputroot ${tmpOutputRoot}conmatCortex_ -targetfile $jlfLabels -targetnamefile $corticalLabelDef -outputnodes");
+    system("conmat -outputroot ${tmpOutputRoot}conmatCortex_ -targetfile $jlfLabels -targetnamefile $jlfCorticalLabelDef -outputnodes");
 
     my $corticalLabelMask = "${tmpOutputRoot}corticalJLFMask.nii.gz";
     
     system("${antsPath}ThresholdImage 3 ${tmpOutputRoot}conmatCortex_nodes.nii.gz $corticalLabelMask 1 Inf");
     
-    system("conmat -outputroot ${tmpOutputRoot}conmatWM_ -targetfile $jlfLabels -targetnamefile $wmLabelDef -outputnodes");
+    system("conmat -outputroot ${tmpOutputRoot}conmatWM_ -targetfile $jlfLabels -targetnamefile $jlfWMLabelDef -outputnodes");
     
     my $wmLabelMask = "${tmpOutputRoot}wmJLFMask.nii.gz";
 
@@ -488,12 +493,6 @@ sub createGraphNodesAndTrackingMasks {
     # Add these to the cortical mask
     system("ImageMath 3 $corticalMask + $corticalMaskTmp $possibleHoles");
 
-    # Now propagate the labels to the mask
-    system("conmat -outputroot ${tmpOutputRoot}conmat_ -targetfile $newLabels -targetnamefile $newCorticalLabelDef -outputnodes");
-    
-    # Last two parameters add stopping criteria and topology constraints
-    system("${antsPath}ImageMath 3 $replacedCorticalLabels PropagateLabelsThroughMask $corticalMask ${tmpOutputRoot}conmat_nodes.nii.gz 5 1");
-    
     # For QC purposes, record edits made to the cortical mask
     # 1 = in JLF mask, but not in final mask
     # 2 = in final mask, but not in JLF mask
@@ -501,7 +500,71 @@ sub createGraphNodesAndTrackingMasks {
     system("ImageMath 3 $corticalMaskEdits m $corticalMask 2");
     system("ImageMath 3 $corticalMaskEdits + $corticalMaskEdits $corticalLabelMask");
 
-    # Also output the mask containing all tracts, with cortical labels on the boundary
-    system("ImageMath 3 $wmCorticalBoundaryLabeled m $replacedCorticalLabels $wmMaskDilated");
-    system("ImageMath 3 $wmCorticalBoundaryLabeled addtozero $wmCorticalBoundaryLabeled $wmMaskDilated");
+}
+
+
+#
+# Create $graphNodes for some label set. This can be called multiple times
+# with the same mask but different labels, to use different parcellations.
+#
+# createGraphNodes($labelImage, $corticalLabelDef, $corticalMask, $graphNodes)
+# 
+sub createGraphNodes {
+    
+    my ($labelImage, $corticalLabelDef, $corticalMask, $graphNodes) = @_;
+    
+    my $tmpOutputRoot = "${tmpDir}/createGraphNodes_";
+
+    system("conmat -outputroot ${tmpOutputRoot}conmat_ -targetfile $labelImage -targetnamefile $corticalLabels -outputnodes");
+    
+    my $corticalLabelsTmp = "${tmpOutputRoot}CorticalLabelsTmp.nii.gz";
+
+    # Propagate the labels to the mask (fills unlabeled voxels in mask)
+    #
+    # Last two parameters add stopping criteria and topology constraints
+    system("${antsPath}ImageMath 3 $corticalLabelsTmp PropagateLabelsThroughMask $corticalMask ${tmpOutputRoot}conmat_nodes.nii.gz 5 1");
+
+    # Mask the labels (removes labeled voxels outside the mask)
+    system("ImageMath 3 $graphNodes m $corticalMask ${corticalLabelsTmp}");
+
+}
+
+
+#
+# For QC
+#
+# Create $labeledTractExtent, this image is > 1 in all voxels that tracts can reach.
+#
+# This can be visualized to see that tracts can reach cortex and don't pass through holes
+#
+# createTrackingExtentLabeledMask($corticalLabels, $corticalMask, $exclusionMask, $labeledTractExtent)
+#
+sub createTrackingExtentLabeledMask {
+
+    my ($corticalLabels, $corticalMask, $exclusionMask, $labeledTractExtent) = @_;
+    
+    my $tmpOutputRoot = "${tmpDir}/createTrackingExtentLabeledMask_";
+
+    my $tractExtentMask = "${tmpOutputRoot}TractExtentMask.nii.gz";
+
+    system("ThresholdImage 3 $exclusionMask $tractExtentMask 0 0");
+
+    my $corticalBoundaryVoxels = "${tmpOutputRoot}CorticalBoundaryVoxels.nii.gz";
+
+    system("ImageMath 3 $corticalBoundaryVoxels m $tractExtentMask $corticalLabels");
+
+    # Find the maximum cortical label; WM label is max + 1
+
+    my $minMaxMeanOutput = `MeasureMinMaxMean 3 $corticalBoundaryVoxels`; 
+    
+    $minMaxMeanOutput =~ m/Max : \[(\d+)\]/;
+
+    my $maxLabel = $1 + 1;
+
+    my $wmLabeled = "${tmpOutputRoot}wmLabeled.nii.gz";
+
+    system("ImageMath 3 $wmLabeled m $tractExtentMask $maxLabel");
+
+    system("ImageMath 3 $labeledTractExtent addtozero $corticalBoundaryVoxels $wmLabeled ");
+
 }
