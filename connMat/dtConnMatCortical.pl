@@ -13,13 +13,15 @@ use Getopt::Long;
 my ($antsPath, $sysTmpDir) = @ENV{'ANTSPATH', 'TMPDIR'};
 
 
-# CSV file containing cortical label definitions
-my $jlfCorticalLabelDef = "mindBoggleCorticalGraphNodes.csv";
+# CSV file containing JLF cortical label definitions
+my $jlfCorticalLabelDef = "${Bin}/mindBoggleCorticalGraphNodes.csv";
 
-# CSV file containing WM label definitions
-my $jlfWMLabelDef = "mindBoggleWMLabels.csv";
+# CSV file containing JLF WM label definitions
+my $jlfWMLabelDef = "${Bin}/mindBoggleWMLabels.csv";
 
+my $graphLabelSuffix = "PG_antsLabelFusionLabels";
 
+my $graphCorticalLabelDef = $jlfCorticalLabelDef;
 
 my $usage = qq{
 
@@ -56,12 +58,21 @@ my $usage = qq{
      Required only for longitudinal data. Either "session" to evaluate connectivity in the intra-session 
      T1, or "sst", to do it in the SST space. If "session", graph nodes must be defined for each time point.
   
+   --label-suffix
+     Extension for an image in the timepout antsCT output directory containing cortical labels. By default, 
+     this is the JLF labels. If this option is specified, the list of cortical label IDs and names must be
+     provided with the --cortical-label-def option. The image may contain non-cortical labels, but only the 
+     cortical labels will be used for the graph (default = $graphCorticalLabelSuffix).
 
+   --cortical-label-def
+     A CSV file containing "Label.ID,Label.Name", with cortical labels only (default = $graphCorticalLabelSuffix).
 
   Some pre-processing is done at run time so it is best to run this script from a qlogin session, or qsub it. 
   You may need to set CAMINO_HEAP_SIZE first to allocate enough RAM for the creation of the nodes.
 
-  The target T1 image / SST should be labeled using the pseudo-geodesic JLF.
+  The target T1 image / SST should be labeled using the pseudo-geodesic JLF. The JLF is always used to define
+  the white matter and cortical masks, after which the cortical labels may be replaced with a custom label set.
+  This allows multiple parcellations to be used with a constant WM mask.
 
   DT data is read from
 
@@ -83,6 +94,15 @@ my $usage = qq{
 
     A mask defined by the dilation of the JLF WM segmentation and adjoining regions of high FA.
     This constrains tracking to white matter, but still allows lines to reach the nodes.
+
+      CorticalMask.nii.gz
+
+    A mask of all voxels containing the nodes.
+
+      LabeledTractInclusionMask.nii.gz
+
+    A label image containing all voxels that tracts can traverse without being terminated, including
+    white matter and the cortical labels.
 
 };
 
@@ -119,7 +139,9 @@ GetOptions ("subject=s" => \$subject,
 	    },
 	    "dt-base-dir=s" => \$dtBaseDir,
 	    "longitudinal-target=s" => sub { my ($opt_name, $opt_value) = @_; $longitudinalTarget = lc($opt_value); },
-	    "output-base-dir=s" => \$outputBaseDir
+	    "output-base-dir=s" => \$outputBaseDir,
+	    "cortical-label-suffix=s" => \$graphLabelSuffix,
+	    "cortical-label-def=s" => \$graphCorticalLabelDef
     )
     or die("Error in command line arguments\n");
 
@@ -162,6 +184,7 @@ my $t1Brain = "";
 my $t1Mask = "";
 my $faT1 = "";
 my $jlfLabels = "";
+my $graphLabels = "";
 
 # For output in SST space only
 my $dtToSSTComposedWarp = "";
@@ -169,16 +192,16 @@ my $dtToSSTComposedWarp = "";
 my $dtToT1DistCorrRoot = "";
 
 if ($longitudinalTarget eq "sst") {
-    ($t1Brain, $t1Mask, $faT1, $jlfLabels, $dtToSSTComposedWarp) = 
-	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget);
+    ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToSSTComposedWarp) = 
+	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphLabelSuffix, $longitudinalTarget);
     
     if (! -f $dtToSSTComposedWarp ) {
 	die("\n  Could not create SST warp for $subject $timepoint");
     }
 }
 else {
-    ($t1Brain, $t1Mask, $faT1, $jlfLabels, $dtToT1DistCorrRoot) = 
-	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget);
+    ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToT1DistCorrRoot) = 
+	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphLabelSuffix, $longitudinalTarget);
     
     if (! -f "${dtToT1DistCorrRoot}0GenericAffine.mat" ) {
 	die("\n  Missing DT -> T1 distortion correction warp for $subject $timepoint");
@@ -198,22 +221,18 @@ if (! -f $t1Mask ) {
 if (! -f $jlfLabels ) {
     die("\n  No T1 JLF labels for $subject $timepoint");
 }
+if (! -f $graphLabels ) {
+    die("\n  No graph labels for $subject $timepoint");
+}
 
 # Root for output we will create
 my $tpOutputRoot = "${tpOutputDir}/${subject}_${timepoint}_";
 
-my $wmMask = "${tmpDir}/${subject}_${timepoint}_wmMask.nii.gz";
+my ($corticalMask, $exclusionMask, $corticalMaskEdits) = createTrackingMasks($jlfLabels, $faT1, $tpOutputRoot);
 
-createWMMask($jlfLabels, $corticalLabelDef, $wmLabelDef, $faT1, $wmMask);
+my $graphNodes = createGraphNodes($jlfLabels, $corticalMask, $corticalLabelDef, $tpOutputRoot);
 
-# Exclusion ROI is the negation of the dilated WM mask
-my $exclusionMask = "${tpOutputDir}/${subject}_${timepoint}_ExclusionMask.nii.gz";
-
-createExclusionMask($wmMask, $exclusionMask);
-
-my $graphNodes = "${tpOutputDir}/${subject}_${timepoint}_GraphNodes.nii.gz";
-
-createGraphNodes($jlfLabels, $corticalLabelDef, $wmMask, $graphNodes);
+my $labeledTractExtent = createTrackingExtentLabeledMask($graphNodes, $corticalMask, $exclusionMask, $outputRoot);
 
 my $scriptToRun = "${tpOutputDir}/connMat_${subject}_${timepoint}.sh";
 
@@ -259,7 +278,7 @@ system("rmdir $tmpDir");
 #
 # Get images that we need to compute the connectivity in the target space.
 #
-# my ($t1Brain, $t1Mask, $faT1, $jlfLabels, $dtToTargetWarp) = getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget)
+# my ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToTargetWarp) = getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphLabelSuffix, $longitudinalTarget)
 #
 # For longitudinal processing in the SST space, $dtToTargetWarp will be an image, otherwise it will be a string containing
 # the distortion correction warp root.
@@ -268,11 +287,12 @@ system("rmdir $tmpDir");
 #
 sub getTargetSpaceImages {
 
-    my ($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $longitudinalTarget) = @_;
+    my ($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphLabelSuffix, $longitudinalTarget) = @_;
     
     my $t1Brain = "";
     my $t1Mask = "";
     my $jlfLabels = "";
+    my $graphLabels = "";
     my $dtToTargetWarp = "";
     # A session FA warped to T1, space, or for SST output, the average of all time point FA
     my $faT1 = "";
@@ -310,6 +330,8 @@ sub getTargetSpaceImages {
 	    $t1Mask = "${sstOutputRoot}BrainExtractionMask.nii.gz";
 	    
 	    $jlfLabels = "${sstOutputRoot}PG_antsLabelFusionLabels.nii.gz";
+
+	    $graphLabels = "${sstOutputRoot}${graphLabelSuffix}.nii.gz";
 	    
 	    my $t1ToSSTWarp = "${tpAntsCTOutputRoot}TemplateToSubject0Warp.nii.gz";
 	    my $t1ToSSTAffine = "${tpAntsCTOutputRoot}TemplateToSubject1GenericAffine.mat";
@@ -334,6 +356,8 @@ sub getTargetSpaceImages {
 	    $t1Mask = "${tpAntsCTOutputRoot}BrainExtractionMask.nii.gz";
 	    
 	    $jlfLabels = "${tpAntsCTOutputRoot}PG_antsLabelFusionLabels.nii.gz";
+
+	    $graphLabels = "${tpAntsCTOutputRoot}${graphLabelSuffix}.nii.gz";
 	    
 	    $dtToTargetWarp = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr";
 
@@ -362,13 +386,15 @@ sub getTargetSpaceImages {
 	
 	$jlfLabels = "${tpAntsCTOutputRoot}PG_antsLabelFusionLabels.nii.gz";
 
+	$graphLabels = "${tpAntsCTOutputRoot}${graphLabelSuffix}.nii.gz";
+
 	$dtToTargetWarp = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr";
 
 	$faT1 = "${tpDTIDir}/dtNorm/${subject}_${timepoint}_FANormalizedToStructural.nii.gz";
 	
     }
 
-    return ($t1Brain, $t1Mask, $faT1, $jlfLabels, $dtToTargetWarp);
+    return ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToTargetWarp);
     
 }
 
@@ -390,12 +416,17 @@ sub getTargetSpaceImages {
 # streamlines to reach cortical targets, but also lets them go one voxel (in T1w) space outside the WM mask,
 # without being terminated.
 #
-# createTrackingMasks($jlfLabels, $faT1, $corticalMask, $wmMask, $exclusionMask, $corticalMaskEdits)
+# my ($corticalMask, $exclusionMask, $corticalMaskEdits) = createTrackingMasks($jlfLabels, $faT1, $outputRoot)
 #
 #
 sub createTrackingMasks {
 
-    my ($jlfLabels, $faT1, $corticalMask, $wmMask, $exclusionMask, $corticalMaskEdits) = @_;
+    my ($jlfLabels, $faT1, $outputRoot) = @_;
+
+    # Images to be returned
+    my $corticalMask = "${outputRoot}CorticalMask.nii.gz";
+    my $exclusionMask = "${outputRoot}ExclusionMask.nii.gz";
+    my $corticalMaskEdits = "${outputRoot}CorticalMaskEdits.nii.gz";
 
     my $tmpOutputRoot = "${tmpDir}/trackingMasks_";
 
@@ -436,26 +467,29 @@ sub createTrackingMasks {
     # This ought to prevent holes but might fail in some cases, eg it might allow holes in
     # medial GM if the other hemisphere label is close enough and FA is above the threshold in the cortex 
     my $wmAndGMErode = "${tmpOutputRoot}wmAndGMErode.nii.gz";
-    system("${antsPath}ImageMath 3 ${tmpOutputRoot}wmAndGM.nii.gz + ${wmLabelMask} ${corticalNodeMask}");
+    system("${antsPath}ImageMath 3 ${tmpOutputRoot}wmAndGM.nii.gz + ${wmLabelMask} ${corticalLabelMask}");
     system("${antsPath}ImageMath 3 $wmAndGMErode ME ${tmpOutputRoot}wmAndGM.nii.gz 1");
 
     system("${antsPath}ImageMath 3 $faMask m $faMask $wmAndGMErode");
 
     # Surviving WM (FA > 0.25) that overlaps cortex
-    system("${antsPath}ImageMath 3 $faMask m $faMask $corticalNodeMask");
+    system("${antsPath}ImageMath 3 $faMask m $faMask $corticalLabelMask");
 
     system("${antsPath}ImageMath 3 ${tmpOutputRoot}faLabelPlusThresh.nii.gz + $faMask $wmLabelMask");
 
     # Remove anything not connected to cerebral WM 
     system("${antsPath}LabelClustersUniquely 3 ${tmpOutputRoot}faLabelPlusThresh.nii.gz ${tmpOutputRoot}clusters.nii.gz 20000");
 
+    # final WM mask
+    my $wmMask = "${tmpOutputRoot}wmMask.nii.gz";
+    
     system("${antsPath}ThresholdImage 3 ${tmpOutputRoot}clusters.nii.gz $wmMask 1 Inf");
 
     if (! -f $wmMask ) {
 	die("\n  Could not create WM mask $wmMask");
     }
 
-    my $corticalMaskTmp = "${tmpOutputRoot}CorticalMaskTmp.nii.gz";
+    my $corticalMaskTmp = "${tmpOutputRoot}corticalMaskTmp.nii.gz";
 
     # Update the cortical mask
     #
@@ -470,10 +504,10 @@ sub createTrackingMasks {
     system("${antsPath}ImageMath 3 $wmMaskDilated MD $wmMask 1");
     
     # Termination mask for Camino is the inversion of the dilated mask
-    system("${antsPath}ThresholdImage 3 $wmMaskDilated $tractTerminationMask 1 1 0 1");
+    system("${antsPath}ThresholdImage 3 $wmMaskDilated $exclusionMask 1 1 0 1");
     
-    if (! -f $tractTerminationMask ) {
-	die("\n  Could not create tract termination mask $tractTerminationMask");
+    if (! -f $exclusionMask ) {
+	die("\n  Could not create exclusion mask $exclusionMask");
     }
 
     # Now check that the boundary of the termination mask has cortical labels in voxels that are next to cortex
@@ -486,7 +520,7 @@ sub createTrackingMasks {
     system("ImageMath 3 $corticalMaskDilated MD $corticalMaskTmp 1");
 
     # The intersection of these two should contain the cortical labels
-    my $possibleHoles = "${tmpOutputRoot}FillHolesMask.nii.gz";
+    my $possibleHoles = "${tmpOutputRoot}fillHolesMask.nii.gz";
 
     system("ImageMath 3 $possibleHoles m $corticalMaskDilated $trackingEdgeMask");
 
@@ -500,24 +534,27 @@ sub createTrackingMasks {
     system("ImageMath 3 $corticalMaskEdits m $corticalMask 2");
     system("ImageMath 3 $corticalMaskEdits + $corticalMaskEdits $corticalLabelMask");
 
+    return ($corticalMask, $wmMask, $exclusionMask, $corticalMaskEdits);
+
 }
 
 
 #
-# Create $graphNodes for some label set. This can be called multiple times
-# with the same mask but different labels, to use different parcellations.
+# Create $graphNodes for some label set. 
 #
-# createGraphNodes($labelImage, $corticalLabelDef, $corticalMask, $graphNodes)
+# my $graphNodes = createGraphNodes($labelImage, $corticalLabelDef, $corticalMask, $outputRoot)
 # 
 sub createGraphNodes {
     
-    my ($labelImage, $corticalLabelDef, $corticalMask, $graphNodes) = @_;
-    
+    my ($labelImage, $corticalLabelDef, $corticalMask, $outputRoot) = @_;
+
+    my $graphNodes = "${outputRoot}GraphNodes.nii.gz";
+
     my $tmpOutputRoot = "${tmpDir}/createGraphNodes_";
 
-    system("conmat -outputroot ${tmpOutputRoot}conmat_ -targetfile $labelImage -targetnamefile $corticalLabels -outputnodes");
+    system("conmat -outputroot ${tmpOutputRoot}conmat_ -targetfile $labelImage -targetnamefile $corticalLabelDef -outputnodes");
     
-    my $corticalLabelsTmp = "${tmpOutputRoot}CorticalLabelsTmp.nii.gz";
+    my $corticalLabelsTmp = "${tmpOutputRoot}corticalLabelsTmp.nii.gz";
 
     # Propagate the labels to the mask (fills unlabeled voxels in mask)
     #
@@ -526,7 +563,9 @@ sub createGraphNodes {
 
     # Mask the labels (removes labeled voxels outside the mask)
     system("ImageMath 3 $graphNodes m $corticalMask ${corticalLabelsTmp}");
-
+    
+    return $graphNodes;
+    
 }
 
 
@@ -535,13 +574,15 @@ sub createGraphNodes {
 #
 # Create $labeledTractExtent, this image is > 1 in all voxels that tracts can reach.
 #
-# This can be visualized to see that tracts can reach cortex and don't pass through holes
+# This can be visualized to see that tracts can reach the graph nodes
 #
-# createTrackingExtentLabeledMask($corticalLabels, $corticalMask, $exclusionMask, $labeledTractExtent)
+# my $labeledTractExtent = createTrackingExtentLabeledMask($graphNodes, $corticalMask, $exclusionMask, $outputRoot)
 #
 sub createTrackingExtentLabeledMask {
 
-    my ($corticalLabels, $corticalMask, $exclusionMask, $labeledTractExtent) = @_;
+    my ($graphNodes, $corticalMask, $exclusionMask, $outputRoot) = @_;
+
+    my $labeledTractExtent = "${outputRoot}LabeledTractInclusionMask.nii.gz";
     
     my $tmpOutputRoot = "${tmpDir}/createTrackingExtentLabeledMask_";
 
@@ -549,9 +590,9 @@ sub createTrackingExtentLabeledMask {
 
     system("ThresholdImage 3 $exclusionMask $tractExtentMask 0 0");
 
-    my $corticalBoundaryVoxels = "${tmpOutputRoot}CorticalBoundaryVoxels.nii.gz";
+    my $corticalBoundaryVoxels = "${tmpOutputRoot}corticalBoundaryVoxels.nii.gz";
 
-    system("ImageMath 3 $corticalBoundaryVoxels m $tractExtentMask $corticalLabels");
+    system("ImageMath 3 $corticalBoundaryVoxels m $tractExtentMask $graphNodes");
 
     # Find the maximum cortical label; WM label is max + 1
 
@@ -567,4 +608,5 @@ sub createTrackingExtentLabeledMask {
 
     system("ImageMath 3 $labeledTractExtent addtozero $corticalBoundaryVoxels $wmLabeled ");
 
+    return $labeledTractExtent;
 }
