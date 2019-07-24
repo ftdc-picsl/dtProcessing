@@ -180,7 +180,7 @@ else {
 # Gets removed later, so check we can create this and if not, exit immediately
 mkpath($tmpDir, {verbose => 0, mode => 0755}) or die "Cannot create working directory $tmpDir (maybe it exists from a previous failed run)\n\t";
 
-print "\n  Creating seed image at $seedSpacing mm isotropic resolution, min FA $seedMinFA \n";
+print "\nCreating seed image at $seedSpacing mm isotropic resolution, min FA $seedMinFA\n";
 
 # Resample the DT and get FA
 my $seedSpaceRefImage = "${tmpDir}/faResample.nii.gz";
@@ -199,7 +199,7 @@ my $seedImage = "${tmpDir}/seedMask.nii.gz";
 
 system("${antsPath}ThresholdImage 3 ${tmpDir}/faForSeeds.nii.gz $seedImage $seedMinFA Inf");
 
-print "\n  Tracking and warping streamlines to reference space \n";
+print "\nTracking and warping streamlines to reference space \n";
 
 # Track, and output lines in structural space
 
@@ -232,7 +232,7 @@ system("procstreamlines -inputfile $allTracts -mintractlength $minTractLength -e
 my $endpointTracts = "${tmpDir}/endpointTracts.Bfloat";
 my $graphTracts = "${tmpDir}/graphTracts.Bfloat";
 
-print "\n  Computing connectivity matrix \n";
+print "\nComputing connectivity matrix\n";
 
 my $cmd = "procstreamlines -inputfile $allTracts -mintractlength $minTractLength -exclusionfile ${tmpDir}/exclusion.nii.gz -truncateinexclusion -endpointfile $labelImage -header $referenceImage -outputfile $endpointTracts -silent";
 
@@ -272,7 +272,7 @@ system("cp ${tmpDir}/SeedsDeformed.nii.gz ${outputRoot}SeedDensityDeformed.nii.g
 if ($computeScalars) {
 
     # Resample DT to Structural space
-    print "\n  Computing diffusion scalar connectivity matrices \n";
+    print "\nComputing diffusion scalar connectivity matrices \n";
 
     my $dtWarpString = "";
 
