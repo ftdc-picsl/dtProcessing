@@ -24,7 +24,7 @@ my $ram="8";
 my $submitToQueue=1;
 
 # CSV file containing JLF cortical label definitions
-my $jlfCorticalLabelDef = "${Bin}/mindBoggleCorticalGraphNodes.csv";
+my $jlfCorticalLabelDef = "${Bin}/mindboggleCorticalLabels.csv";
 
 # These are what are used to label the cortical mask from JLF, and become the graph nodes
 # Default to the JLF labels themselves

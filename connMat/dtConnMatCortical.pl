@@ -14,10 +14,10 @@ my ($antsPath, $sysTmpDir) = @ENV{'ANTSPATH', 'TMPDIR'};
 
 
 # CSV file containing JLF cortical label definitions
-my $jlfCorticalLabelDef = "${Bin}/mindBoggleCorticalGraphNodes.csv";
+my $jlfCorticalLabelDef = "${Bin}/mindboggleCorticalLabels.csv";
 
 # CSV file containing JLF WM label definitions
-my $jlfWMLabelDef = "${Bin}/mindBoggleWMLabels.csv";
+my $jlfWMLabelDef = "${Bin}/mindboggleWMLabels.csv";
 
 # These are what are used to label the cortical mask from JLF, and become the graph nodes
 # Default to the JLF labels themselves
