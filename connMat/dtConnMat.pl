@@ -21,7 +21,7 @@ my $usage = qq{
      --dt 
      --mask
      --reference-image
-     --dist-corr-warp-root | --composed-warp
+     --dist-corr-warp-root | --dt-to-reference-tract-warp 
      --label-image
      --label-def
      --exclusion-image
@@ -47,11 +47,14 @@ my $usage = qq{
    --reference-image     
      The reference image, eg the subject's T1 image.
  
-   --dist-corr-warp-root | --composed-warp
+   --dist-corr-warp-root 
      Root of warps, where the reference image is the fixed image. This is used when there is a single Warp / Affine pair 
      of transforms, usually a distortion correction mapping the the DWI to a T1 image. For more complex transforms, use
-      --composed-warp to pass a single warp field to use to map streamlines. Note that the order of transforms for 
+      --dt-to-reference-tract-warp to pass a single warp field to use to map streamlines. Note that the order of transforms for 
      warping point sets is reversed with respect to the order required for warping images.
+
+   --dt-to-reference-tract-warp
+     A composed warp for transforming point sets into the reference space. 
 
    --label-image
      Image containing target labels in the reference space, these are the nodes of the connectivity graph.
@@ -89,6 +92,10 @@ my $usage = qq{
    --compute-scalars
      Compute the median tract (FA, RD, AD, MD) in addition to the streamline counts (default = 0).
 
+   --dt-to-reference-image-warp
+     A composed warp for transforming images sets into the reference space. This is used to warp the DT into the reference 
+     space, after which FA, MD, etc are sampled. Required if using if using --dt-to-reference-tract-warp and scalars are
+     to be computed.
 
 
   Requires ANTs, ANTsR and Camino
@@ -118,7 +125,9 @@ my ($dt, $fa, $mask, $outputRoot, $labelImage, $labelDef, $exclusion, $reference
 
 # Require one of these
 my $distCorrWarpRoot = "";
-my $composedWarp = "";
+
+my $composedTractWarp = "";
+my $composedImageWarp = "";
 
 # Options have default settings
 my $seedMinFA = 0.25;
@@ -130,7 +139,8 @@ my $countLongestPath = 0;
 GetOptions ("dt=s" => \$dt,
 	    "exclusion-image=s" => \$exclusion,
 	    "dist-corr-warp-root=s" => \$distCorrWarpRoot,
-	    "composed-warp=s" => \$composedWarp,
+	    "dt-to-reference-tract-warp=s" => \$composedTractWarp,
+	    "dt-to-reference-image-warp=s" => \$composedImageWarp,
 	    "label-image=s" => \$labelImage,
 	    "label-def=s" => \$labelDef,
 	    "mask=s" => \$mask,
@@ -144,6 +154,19 @@ GetOptions ("dt=s" => \$dt,
     )
     or die("Error in command line arguments\n");
 
+
+if (-f $composedTractWarp) {
+    if ($computeScalars) {
+	if (! -f $composedImageWarp) {
+	    die("\n  Missing required forward warp to transform DT to reference space for scalar matrix computation (see usage for --dt-to-reference-image-warp)\n");
+	}
+    }
+}
+else {
+    if (! (-f "${distCorrWarpRoot}1InverseWarp.nii.gz" && -f "${distCorrWarpRoot}0GenericAffine.mat") ) {
+	die("\n  Missing required transform to reference space\n");
+    }
+}
 
 # Some other settings we hard code
 
@@ -206,8 +229,8 @@ print "\nTracking and warping streamlines to reference space \n";
 # Get appropriate point set warp
 my $warpString = "";
 
-if (-f $composedWarp) {
-    $warpString = "--composed-inverse-warp $composedWarp";
+if (-f $composedTractWarp) {
+    $warpString = "--composed-inverse-warp $composedTractWarp";
 }
 else {
     $warpString = "--dist-corr-inverse-warp=${distCorrWarpRoot}1InverseWarp.nii.gz --dist-corr-affine=${distCorrWarpRoot}0GenericAffine.mat";
@@ -276,8 +299,8 @@ if ($computeScalars) {
 
     my $dtWarpString = "";
 
-    if (-f $composedWarp) {
-	$dtWarpString = "-t $composedWarp";
+    if (-f $composedImageWarp) {
+	$dtWarpString = "-t $composedImageWarp";
     }
     else {
 	$dtWarpString = "-t ${distCorrWarpRoot}1Warp.nii.gz -t ${distCorrWarpRoot}0GenericAffine.mat";

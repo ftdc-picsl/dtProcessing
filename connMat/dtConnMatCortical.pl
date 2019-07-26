@@ -202,15 +202,16 @@ my $jlfLabels = "";
 my $graphLabels = "";
 
 # For output in SST space only
-my $dtToSSTComposedWarp = "";
+my $dtToTargetTractWarp = "";
+my $dtToTargetImageWarp = "";
 
 my $dtToT1DistCorrRoot = "";
 
 if ($longitudinalTarget eq "sst") {
-    ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToSSTComposedWarp) = 
+    ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToTargetTractWarp, $dtToTargetImageWarp) = 
 	getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphCorticalLabelSystem, $longitudinalTarget);
     
-    if (! -f $dtToSSTComposedWarp ) {
+    if (! -f $dtToTargetTractWarp ) {
 	die("\n  Could not create SST warp for $subject $timepoint");
     }
 }
@@ -260,7 +261,7 @@ my $labeledTractExtent = createTrackingExtentLabeledMask($graphNodes, $corticalM
 my $dtToReferenceWarpOption = "";
 
 if ($longitudinalTarget eq "sst") {
-    $dtToReferenceWarpOption = "--composed-warp $dtToSSTComposedWarp"
+    $dtToReferenceWarpOption = "--dt-to-reference-tract-warp $dtToTargetTractWarp --dt-to-reference-image-warp $dtToTargetImageWarp";
 }
 else {
     $dtToReferenceWarpOption = "--dist-corr-warp-root $dtToT1DistCorrRoot";
@@ -295,22 +296,27 @@ system("rmdir $tmpDir");
 #
 # Get images that we need to compute the connectivity in the target space.
 #
-# my ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToTargetWarp) = getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphCorticalLabelSystem, $longitudinalTarget)
+# my ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtDistCorrWarpRoot) = 
+#    getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphCorticalLabelSystem, $longitudinalTarget)
 #
-# For longitudinal processing in the SST space, $dtToTargetWarp will be an image, otherwise it will be a string containing
-# the distortion correction warp root.
+#
+# If $longutidunalTarget is not blank, composed warps are returned:
+#
+# my ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToTargetTractWarp, $dtToTargetImageWarp) = 
+#   getTargetSpaceImages($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphCorticalLabelSystem, $longitudinalTarget)
+#
 #
 # This doesn't check all images for correctness but will return an empty array if the T1 data cannot be found
 #
 sub getTargetSpaceImages {
 
     my ($antsCTBaseDir, $dtBaseDir, $subject, $timepoint, $graphCorticalLabelSystem, $longitudinalTarget) = @_;
-    
+
+    # common output 
     my $t1Brain = "";
     my $t1Mask = "";
     my $jlfLabels = "";
     my $graphLabels = "";
-    my $dtToTargetWarp = "";
     # A session FA warped to T1, space, or for SST output, the average of all time point FA
     my $faT1 = "";
 
@@ -350,20 +356,30 @@ sub getTargetSpaceImages {
 
 	    $graphLabels = "${sstOutputRoot}${graphCorticalLabelSystem}.nii.gz";
 	    
-	    my $t1ToSSTWarp = "${tpAntsCTOutputRoot}TemplateToSubject0Warp.nii.gz";
-	    my $t1ToSSTAffine = "${tpAntsCTOutputRoot}TemplateToSubject1GenericAffine.mat";
-	    
+	    my $t1ToSSTTractWarp = "${tpAntsCTOutputRoot}TemplateToSubject0Warp.nii.gz";
+	    my $t1ToSSTTractAffine = "${tpAntsCTOutputRoot}TemplateToSubject1GenericAffine.mat";
+
+	    # Forward and Inv are defined in the context of image warping
+	    my $distCorrForwardWarp = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr1Warp.nii.gz";
 	    my $distCorrInvWarp = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr1InverseWarp.nii.gz";
 	    my $distCorrAffine = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr0GenericAffine.mat";
 	    
-	    $dtToTargetWarp = "${tmpDir}/${subject}_${timepoint}_tractWarpToSST.nii.gz";
+	    my $dtToTargetTractWarp = "${tmpDir}/${subject}_${timepoint}_tractWarpToSST.nii.gz";
 
 	    my $dtMask = "${tpDTIDir}/dt/${subject}_${timepoint}_BrainMask.nii.gz";
 
-	    system("${antsPath}antsApplyTransforms -d 3 -i $t1Brain -r $dtMask -t [${distCorrAffine}, 1] -t $distCorrInvWarp -t $t1ToSSTAffine -t $t1ToSSTWarp -o [${dtToTargetWarp}, 1] --verbose --float");
+	    system("${antsPath}antsApplyTransforms -d 3 -i $t1Brain -r $dtMask -t [${distCorrAffine}, 1] -t $distCorrInvWarp -t $t1ToSSTTractAffine -t $t1ToSSTTractWarp -o [${dtToTargetTractWarp}, 1] --verbose --float");
 
+	    my $dtToTargetImageWarp = "${tmpDir}/${subject}_${timepoint}_imageWarpToSST.nii.gz";
+	    
+	    my $t1ToSSTImageWarp = "${tpAntsCTOutputRoot}SubjectToTemplate1Warp.nii.gz";
+	    my $t1ToSSTImageAffine = "${tpAntsCTOutputRoot}SubjectToTemplate0GenericAffine.mat";
+
+	    system("${antsPath}antsApplyTransforms -d 3 -i $dtMask -r $t1Brain -t $t1ToSSTImageWarp -t $t1ToSSTImageAffine -t $distCorrForwardWarp -t $distCorrAffine -o [${dtToTargetImageWarp}, 1] --verbose --float");
 	    # subject average FA in SST space
 	    $faT1 = "${dtBaseDir}/${subject}/singleSubjectTemplate/${subject}_AverageFA.nii.gz";
+
+	    return ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToTargetTractWarp, $dtToTargetImageWarp);
 
 	}
 	elsif ($longitudinalTarget eq "session") {
@@ -376,9 +392,11 @@ sub getTargetSpaceImages {
 
 	    $graphLabels = "${tpAntsCTOutputRoot}${graphCorticalLabelSystem}.nii.gz";
 	    
-	    $dtToTargetWarp = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr";
+	    my $distCorrWarpRoot = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr";
 
 	    $faT1 = "${tpDTIDir}/dtNorm/${subject}_${timepoint}_FANormalizedToStructural.nii.gz";
+
+	    return ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $distCorrWarpRoot);
 
 	}
 	else {
@@ -405,13 +423,13 @@ sub getTargetSpaceImages {
 
 	$graphLabels = "${tpAntsCTOutputRoot}${graphCorticalLabelSystem}.nii.gz";
 
-	$dtToTargetWarp = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr";
+	my $distCorrWarpRoot = "${tpDTIDir}/distCorr/${subject}_${timepoint}_DistCorr";
 
 	$faT1 = "${tpDTIDir}/dtNorm/${subject}_${timepoint}_FANormalizedToStructural.nii.gz";
+
+	return ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $distCorrWarpRoot);
 	
     }
-
-    return ($t1Brain, $t1Mask, $faT1, $jlfLabels, $graphLabels, $dtToTargetWarp);
     
 }
 
