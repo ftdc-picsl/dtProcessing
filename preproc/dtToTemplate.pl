@@ -242,7 +242,7 @@ if (-f $structuralImage) {
 
     createScalarImages($dtDistCorr, $outputRoot, $distCorrOutputSuffix);
 
-    if (!$saveDeformedTensors) {
+    if ($saveDeformedTensors) {
 	system("mv $dtDistCorr $outputDir");
     }
 
@@ -256,7 +256,7 @@ if (-f $template) {
 
     createScalarImages($dtTemplate, $outputRoot, $templateOutputSuffix);
 
-    if (!$saveDeformedTensors) {
+    if ($saveDeformedTensors) {
 	system("mv $dtTemplate $outputDir");
     }
 
@@ -270,7 +270,7 @@ if (-f $standardTemplate) {
 
     createScalarImages($dtStandardTemplate, $outputRoot, $standardTemplateOutputSuffix);
     
-    if (!$saveDeformedTensors) {
+    if ($saveDeformedTensors) {
 	system("mv $dtStandardTemplate $outputDir");
     }
     
